@@ -735,126 +735,24 @@ async function fetchOSMGraph() {
         console.warn('localStorageキャッシュ読み込み失敗:', e);
     }
 
-    document.getElementById('loading-msg').textContent = '道路データを取得中… 0%（初回のみ）';
+    document.getElementById('loading-msg').textContent = '道路データを読み込み中… 0%';
 
-    // ── Overpass APIへのクエリ（質問文）を作成 ──
-    // 豊島区（緯度35.710〜35.755、経度139.670〜139.760）内で
-    // 歩行者が通れるすべての道路種別を取得する
-    // highway= の値の意味：
-    //   footway   = 歩道専用路
-    //   pedestrian = 歩行者専用区域
-    //   path      = 未舗装の小道
-    //   residential = 住宅街の道路
-    //   tertiary  = 区道レベルの道路
-    //   steps     = 階段（このアプリでは高コストを設定）
-    //   ほか living_street, service, secondary, primary など
-    const query = `
-[out:json][timeout:60];
-(
-  way["highway"~"^(footway|pedestrian|path|residential|unclassified|tertiary|secondary|primary|living_street|service|steps|track)$"]
-    (35.710,139.670,35.755,139.760);
-);
-out body;
->;
-out skel qt;
-`;
-
-    // ── Overpass APIにPOSTリクエストを送信 ──
-    // fetchはブラウザ組み込みのHTTP通信関数
-    // awaitで「応答が届くまで待つ」
-    // Overpass APIのミラー一覧（1つ目が失敗したら2つ目を試す）
-    const mirrors = [
-        'https://overpass-api.de/api/interpreter',
-        'https://overpass.kumi.systems/api/interpreter',
-    ];
-
-    let res = null;
-    for (const url of mirrors) {
-        try {
-            document.getElementById('loading-msg').textContent = `道路データを取得中… (${url.includes('kumi') ? 'ミラー' : 'メイン'})`;
-            // 90秒タイムアウト付きでリクエスト
-            const controller = new AbortController();
-            const timer = setTimeout(() => controller.abort(), 90000);
-            res = await fetch(url, {
-                method: 'POST',
-                body: 'data=' + encodeURIComponent(query),
-                signal: controller.signal,
-            });
-            clearTimeout(timer);
-            if (res.ok) break; // 成功したらループ終了
-        } catch (e) {
-            if (e.name === 'AbortError') {
-                console.warn(url + ' タイムアウト、次のミラーを試します');
-                continue;
-            }
-            throw e;
-        }
-    }
-    if (!res || !res.ok) throw new Error('Overpass API error: すべてのサーバーに接続できませんでした');
-
-    // ── 受け取ったJSONデータを解析 ──
-    // res.json() = サーバーから届いたJSONテキストをJavaScriptオブジェクトに変換
+    // ── toshima.jsonから道路データを読み込む ──
+    const res = await fetch('./toshima.json');
+    if (!res.ok) throw new Error('toshima.jsonの読み込みに失敗しました');
     const data = await res.json();
     document.getElementById('loading-msg').textContent = 'データを解析中… 30%';
-    // ── グラフのデータ構造を初期化 ──
+
+   // ── グラフのデータ構造を初期化 ──
     // nodes = Map（辞書型）: ノードID → { lat（緯度）, lng（経度）}
     // adj   = Map（辞書型）: ノードID → [隣接するノードのリスト]
     //
     // Mapとは？
     //   キーと値のペアを管理するデータ構造。
     //   map.set(key, value) で追加、map.get(key) で取得できる。
-    const nodes = new Map();
-    const adj   = new Map();
+    const nodes = new Map(Object.entries(data.nodes).map(([k,v])=>[Number(k),v]));
+    const adj   = new Map(Object.entries(data.adj).map(([k,v])=>[Number(k),v]));
 
-    // ── Step1: ノードを登録 ──
-    // OSMデータの中の type:"node" 要素（交差点・曲がり角）を全部登録する
-    data.elements.forEach(el => {
-        if (el.type === 'node') {
-            // ノードIDをキーとして緯度経度を保存
-            nodes.set(el.id, { lat: el.lat, lng: el.lon });
-            // 隣接リストも空の配列で初期化
-            adj.set(el.id, []);
-        }
-    });
-    document.getElementById('loading-msg').textContent = 'ノードを登録中… 60%';
-    // ── Step2: ウェイ（道路）からエッジ（辺）を生成 ──
-    // ウェイは「ノードIDの配列」として記録されている
-    // 例: ウェイ = [A, B, C, D] → エッジは A-B, B-C, C-D の3本
-    // 道路は双方向（行きも帰りも通れる）なので、両方向のエッジを追加する
-    data.elements.forEach(el => {
-        if (el.type !== 'way') return; // ウェイ以外はスキップ
-
-        // 階段かどうかを確認
-        // 高齢者は階段が苦手なので、階段のコストを5倍にして迂回を促す
-        const isSteps = el.tags && el.tags.highway === 'steps';
-
-        const nds = el.nodes; // このウェイを構成するノードIDの配列
-
-        // 隣接するノードのペア（A→B, B→C, C→D...）をループ
-        for (let i = 0; i < nds.length - 1; i++) {
-            const a = nds[i];     // 始点ノードID
-            const b = nds[i + 1]; // 終点ノードID
-
-            // どちらかのノードが登録されていなければスキップ（データ不整合対策）
-            if (!nodes.has(a) || !nodes.has(b)) continue;
-
-            const na = nodes.get(a); // 始点ノードの座標
-            const nb = nodes.get(b); // 終点ノードの座標
-
-            // 2点間の実際の距離（メートル）をHaversine公式で計算
-            const d = haversine(na.lat, na.lng, nb.lat, nb.lng);
-
-            // 階段は高齢者避難で不利なためコストを5倍に設定
-            // ダイクストラ法はコストが小さい道を優先するため、自動的に階段を迂回する
-            const cost = isSteps ? d * 5 : d;
-
-            // 双方向エッジを追加（A→Bとと B→A の両方）
-            adj.get(a).push({ to: b, dist: cost, realDist: d });
-            adj.get(b).push({ to: a, dist: cost, realDist: d });
-        }
-    });
-    document.getElementById('loading-msg').textContent = 'ルートを構築中… 85%';
-    // ── グラフをメモリにキャッシュ（格子インデックスも構築）──
     const grid = buildGridIndex(nodes);
     document.getElementById('loading-msg').textContent = '完了！ 100%';
     osmGraph = { nodes, adj, grid };
