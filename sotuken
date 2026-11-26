@@ -1,0 +1,1734 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>豊島区 避難所ナビ</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        body { margin: 0; padding: 0; font-family: "Hiragino Kaku Gothic ProN", "Meiryo", sans-serif; background: #f4f4f4; }
+        #map { height: 100vh; width: 100%; z-index: 1; }
+
+        #top-panel {
+            position: absolute; top: 10px; left: 10px;
+            z-index: 1000; width: auto; min-width: 190px; max-width: 260px;
+            background: rgba(255,255,255,0.95); padding: 10px 12px; border-radius: 8px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.15);
+        }
+        #status-area { font-size: 12px; color: #333; font-weight: bold; }
+        .result-box { margin-top: 6px; padding-top: 6px; border-top: 1px solid #ddd; display: none; font-size: 13px; line-height: 1.6; }
+
+        #rest-info {
+            display: none; margin-top: 6px;
+            padding: 6px 8px; background: #e8f8f5; border-radius: 6px; font-size: 12px;
+        }
+        #rest-info.warning { background: #fef9e7; color: #d35400; }
+
+        #legend {
+            position: absolute; bottom: 180px; left: 10px;
+            z-index: 1000; background: rgba(255,255,255,0.92);
+            padding: 8px 10px; border-radius: 8px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+            font-size: 11px; line-height: 1.8;
+        }
+        .legend-item { display: flex; align-items: center; gap: 6px; }
+        .legend-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
+
+        #perf-badge {
+            display: none;
+            position: absolute; bottom: 180px; right: 10px;
+            z-index: 1000;
+            background: rgba(0,0,0,0.6);
+            color: #a8f0c6; font-size: 11px; font-family: monospace;
+            padding: 5px 9px; border-radius: 6px;
+            pointer-events: none;
+        }
+
+        #bottom-panel {
+            position: absolute; bottom: 0; left: 0; width: 100%;
+            z-index: 1000; background: white;
+            padding: 20px 15px 30px 15px; box-sizing: border-box;
+            border-radius: 20px 20px 0 0; box-shadow: 0 -4px 20px rgba(0,0,0,0.2);
+        }
+        .btn-main {
+            display: block; width: 100%; padding: 18px;
+            background: #e74c3c; color: white; border: none; border-radius: 12px;
+            font-size: 18px; font-weight: bold; box-shadow: 0 4px 6px rgba(231,76,60,0.4);
+            cursor: pointer;
+        }
+        .btn-main:active { background: #c0392b; transform: translateY(2px); box-shadow: none; }
+        .btn-toggle-others {
+            display: block; width: 100%; margin-top: 15px; padding: 10px;
+            background: transparent; color: #7f8c8d; border: none;
+            font-size: 14px; text-decoration: underline; cursor: pointer;
+        }
+        #others-menu { display: none; margin-top: 15px; border-top: 1px solid #eee; padding-top: 15px; }
+        .btn-sub {
+            display: block; width: 100%; padding: 12px; margin-bottom: 8px;
+            background: #f8f9fa; color: #2c3e50; border: 2px solid #ddd; border-radius: 8px;
+            font-size: 15px; font-weight: bold; cursor: pointer;
+        }
+        .btn-sub:active { background: #e2e6ea; }
+        .btn-via-rest { border-color: #27ae60; color: #27ae60; }
+        .btn-via-rest:active { background: #d5f5e3; }
+
+        #loading-overlay {
+            display: none; position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.35); z-index: 2000;
+            justify-content: center; align-items: center;
+        }
+        #loading-overlay.active { display: flex; }
+        #loading-box {
+            background: white; border-radius: 12px; padding: 24px 32px;
+            text-align: center; font-size: 15px; font-weight: bold; color: #333;
+        }
+        .spinner {
+            width: 36px; height: 36px; border: 4px solid #eee;
+            border-top-color: #e74c3c; border-radius: 50%;
+            animation: spin 0.8s linear infinite; margin: 0 auto 12px;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        @keyframes pulse {
+            0%, 100% { filter: drop-shadow(0 0 0px transparent); }
+            50%       { filter: drop-shadow(0 0 6px orange) brightness(1.5); }
+        }
+
+        /* 現在地方向矢印マーカー */
+        .arrow-marker { pointer-events: none; }
+        /* 気象警報バナー */
+#weather-banner {
+    display: none;
+    position: absolute; top: 0; left: 0; width: 100%;
+    z-index: 1500; box-sizing: border-box;
+    padding: 10px 15px;
+    background: #e74c3c; color: white;
+    font-size: 13px; font-weight: bold;
+    text-align: center;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+}
+#weather-banner.warning { background: #e67e22; }
+#weather-banner.advisory { background: #f39c12; }
+    </style>
+</head>
+<body>
+
+<div id="weather-banner"></div>
+<div id="map"></div>
+
+<div id="loading-overlay">
+    <div id="loading-box">
+        <div class="spinner"></div>
+        <span id="loading-msg">道路データを取得中…</span>
+    </div>
+</div>
+
+<div id="top-panel">
+    <div id="status-area">下のボタンを押すとナビが始まります</div>
+    <div id="result-box" class="result-box">
+        <b>最寄り避難所:</b><br>
+        <span id="dest-name" style="font-size:15px; color:#2980b9; font-weight:bold;">-</span><br>
+        <b>距離:</b> <span id="dest-dist" style="font-weight:bold;">-</span>
+        &nbsp;&nbsp;<b>到着まで:</b> <span id="dest-time" style="font-weight:bold; color:#e67e22;">-</span>
+        <div id="rest-info">
+            <span id="rest-text"></span>
+        </div>
+    </div>
+</div>
+
+<div id="perf-badge">⏱ <span id="perf-time">-</span></div>
+
+<div id="compass-btn-wrap" style="position:absolute;bottom:300px;right:10px;z-index:1000;">
+    <button id="compass-btn" onclick="requestCompassPermission()"
+        style="background:rgba(255,255,255,0.95);border:2px solid #1565C0;border-radius:8px;
+               padding:7px 11px;font-size:13px;color:#1565C0;font-weight:bold;cursor:pointer;
+               box-shadow:0 2px 6px rgba(0,0,0,0.2);">
+        🧭 コンパス許可
+    </button>
+</div>
+
+<div id="legend">
+    <div class="legend-item"><div class="legend-dot" style="background:#1565C0;"></div>現在地</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#2c3e50; border-radius:2px;"></div>避難所</div>
+    <div class="legend-item"><span style="font-size:13px;">🌳</span> 公園</div>
+    <div class="legend-item"><span style="font-size:13px;">🪑</span> ベンチ設置場所</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#2980b9;"></div>公衆トイレ</div>
+    <div class="legend-item"><div class="legend-dot" style="background:red; opacity:0.6;"></div>危険エリア</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#8e44ad;"></div>手動ナビルート</div>
+</div>
+
+<div id="bottom-panel">
+    <button class="btn-main" onclick="quickEvacuate()">🆘 現在地から安全ルートを探す</button>
+    <button class="btn-toggle-others" onclick="toggleOthers()">その他のルートを開く ▼</button>
+    <div id="others-menu">
+        <button class="btn-sub" onclick="startMode('normal')">🚶 最短で行く（通常徒歩）</button>
+        <button class="btn-sub btn-via-rest" onclick="startMode('via-rest')">🌳 休憩所を通るルートで行く</button>
+    </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
+<script>
+
+// ═══════════════════════════════════════════════════════
+// 【定数の定義】
+// プログラム全体で使う「固定の数値」をまとめて定義する場所。
+// ここを変えるだけでアプリの動作を調整できる。
+// const = 変更しない変数（定数）という意味。
+// ═══════════════════════════════════════════════════════
+const REST_TRIGGER_M      = 500;  // 避難所まで何m以上あれば休憩スポットを探すか（500m）
+const REST_INTERVAL_M     = 500;  // 何mごとに休憩スポットを挟むか（500mごと）
+const MAX_DETOUR_M        = 100;  // 休憩スポットへの寄り道を何mまで許すか（100m）
+const MIN_ENDPOINT_DIST_M = 50;   // 休憩スポットが出発点・目的地に近すぎる場合は除外（50m）
+// TOP_K_SHELTERS は廃止。全避難所を探索して最短1か所を選ぶ。
+
+// ═══════════════════════════════════════════════════════
+// 避難所データ
+// 出典：東京都防災マップ 避難所・避難場所一覧データ（CC BY 4.0）
+// https://catalog.data.metro.tokyo.lg.jp/dataset/t000003d0000000093
+// ═══════════════════════════════════════════════════════
+const shelters = [
+    { name: "旧文成小学校",                    lat: 35.74437000, lng: 139.71450000 },
+    { name: "池袋第三小学校",                   lat: 35.72858400, lng: 139.70301200 },
+    { name: "巣鴨北中学校",                    lat: 35.74167651, lng: 139.72883770 },
+    { name: "池袋本町小学校・池袋中学校（連携校）",  lat: 35.74071400, lng: 139.71457300 },
+    { name: "西部区民事務所",                   lat: 35.73575000, lng: 139.69085800 },
+    { name: "旧真和中学校",                    lat: 35.72548100, lng: 139.69703700 },
+    { name: "仰高小学校",                     lat: 35.73660534, lng: 139.73847310 },
+    { name: "駒込小学校",                     lat: 35.73855524, lng: 139.74325560 },
+    { name: "巣鴨小学校",                     lat: 35.72847815, lng: 139.73490670 },
+    { name: "清和小学校",                     lat: 35.73588527, lng: 139.73290560 },
+    { name: "西巣鴨小学校",                    lat: 35.73849979, lng: 139.72596510 },
+    { name: "豊成小学校",                     lat: 35.73497608, lng: 139.72200850 },
+    { name: "朋有小学校",                     lat: 35.72898679, lng: 139.72350570 },
+    { name: "朝日小学校",                     lat: 35.74112168, lng: 139.73304940 },
+    { name: "池袋第一小学校",                   lat: 35.74168224, lng: 139.71888250 },
+    { name: "池袋小学校",                     lat: 35.73797441, lng: 139.70971650 },
+    { name: "目白小学校",                     lat: 35.72066236, lng: 139.70996610 },
+    { name: "長崎小学校",                     lat: 35.72845295, lng: 139.68986150 },
+    { name: "要小学校",                      lat: 35.73437238, lng: 139.69369000 },
+    { name: "椎名町小学校",                    lat: 35.72672503, lng: 139.68554100 },
+    { name: "高松小学校",                     lat: 35.73956790, lng: 139.69727840 },
+    { name: "千早小学校",                     lat: 35.73504414, lng: 139.68727950 },
+    { name: "富士見台小学校",                   lat: 35.72469546, lng: 139.69320540 },
+    { name: "高南小学校",                     lat: 35.71632097, lng: 139.71428390 },
+    { name: "南池袋小学校",                    lat: 35.72440108, lng: 139.71491860 },
+    { name: "さくら小学校",                    lat: 35.73605283, lng: 139.67998310 },
+    { name: "駒込中学校",                     lat: 35.73600050, lng: 139.74191380 },
+    { name: "西巣鴨中学校",                    lat: 35.72886891, lng: 139.72748030 },
+    { name: "千川中学校",                     lat: 35.73604536, lng: 139.69995240 },
+    { name: "西池袋中学校",                    lat: 35.72773630, lng: 139.69996670 },
+    { name: "千登世橋中学校",                   lat: 35.71701981, lng: 139.71132920 },
+    { name: "明豊中学校",                     lat: 35.73577797, lng: 139.68415870 },
+    { name: "豊島体育館",                     lat: 35.74001500, lng: 139.68955700 },
+    { name: "南長崎スポーツ公園",                lat: 35.72480300, lng: 139.68345300 },
+    { name: "みらい館大明",                    lat: 35.73566453, lng: 139.70451200 },
+];
+
+// ═══════════════════════════════════════════════════════
+// 休憩スポット（公園 + としまベンチプロジェクト設置場所）
+// 出典①：豊島区公共施設一覧（CC BY 2.1）
+// 出典②：としまベンチプロジェクト ベンチ設置場所一覧（CC BY 2.1）
+// ═══════════════════════════════════════════════════════
+const restSpots = [
+    { name: "駒込東公園",           lat: 35.73572, lng: 139.74966 },
+    { name: "染井吉野桜記念公園",     lat: 35.73686, lng: 139.74675 },
+    { name: "駒込公園",            lat: 35.73757, lng: 139.74695 },
+    { name: "駒込四丁目公園",        lat: 35.73521, lng: 139.74182 },
+    { name: "駒込西公園",           lat: 35.73808, lng: 139.73907 },
+    { name: "染井よしの桜の里公園",    lat: 35.73854, lng: 139.74150 },
+    { name: "江戸橋公園",           lat: 35.73183, lng: 139.73671 },
+    { name: "朝日公園",            lat: 35.74111, lng: 139.73239 },
+    { name: "西巣鴨公園",           lat: 35.73643, lng: 139.72568 },
+    { name: "西巣鴨二丁目公園",       lat: 35.74023, lng: 139.72751 },
+    { name: "千川上水公園",          lat: 35.74164, lng: 139.72681 },
+    { name: "巣鴨公園",            lat: 35.73223, lng: 139.73235 },
+    { name: "北大塚二丁目公園",       lat: 35.73505, lng: 139.72968 },
+    { name: "北大塚公園",           lat: 35.73384, lng: 139.72287 },
+    { name: "南大塚からたち公園",      lat: 35.72609, lng: 139.73358 },
+    { name: "南大塚公園",           lat: 35.72770, lng: 139.73125 },
+    { name: "大塚台公園",           lat: 35.73023, lng: 139.72575 },
+    { name: "上池袋中央公園",        lat: 35.73697, lng: 139.72165 },
+    { name: "上池袋東公園",          lat: 35.73619, lng: 139.72250 },
+    { name: "宮仲公園",            lat: 35.73610, lng: 139.72464 },
+    { name: "上池袋公園",           lat: 35.73610, lng: 139.71640 },
+    { name: "上池袋さくら公園",       lat: 35.73846, lng: 139.71704 },
+    { name: "堀之内公園",           lat: 35.73877, lng: 139.71889 },
+    { name: "上池袋くすのき公園",      lat: 35.74068, lng: 139.72095 },
+    { name: "中池袋公園",           lat: 35.73158, lng: 139.71504 },
+    { name: "池袋駅前公園",          lat: 35.73285, lng: 139.71278 },
+    { name: "東池袋青空公園",        lat: 35.73132, lng: 139.72345 },
+    { name: "東池袋二丁目第三公園",    lat: 35.73357, lng: 139.71832 },
+    { name: "東池袋中央公園",        lat: 35.72929, lng: 139.71919 },
+    { name: "東池袋公園",           lat: 35.73130, lng: 139.71777 },
+    { name: "南池袋一丁目公園",       lat: 35.72414, lng: 139.70947 },
+    { name: "南池袋公園",           lat: 35.72760, lng: 139.71432 },
+    { name: "南池袋みどり公園",       lat: 35.72202, lng: 139.71739 },
+    { name: "南池袋第二公園",        lat: 35.72245, lng: 139.71707 },
+    { name: "池袋西口公園",          lat: 35.73019, lng: 139.70890 },
+    { name: "元池袋史跡公園",        lat: 35.72892, lng: 139.70853 },
+    { name: "上り屋敷公園",          lat: 35.72642, lng: 139.70506 },
+    { name: "西池袋公園",           lat: 35.73058, lng: 139.70546 },
+    { name: "谷端川第二親水公園",      lat: 35.73084, lng: 139.69968 },
+    { name: "池袋ふれあい公園",       lat: 35.73627, lng: 139.71048 },
+    { name: "池袋三丁目公園",        lat: 35.73488, lng: 139.70387 },
+    { name: "御嶽北公園",           lat: 35.73748, lng: 139.70613 },
+    { name: "池袋第二公園",          lat: 35.73570, lng: 139.70578 },
+    { name: "谷端川親水公園",        lat: 35.73333, lng: 139.70055 },
+    { name: "池袋公園",            lat: 35.73798, lng: 139.70863 },
+    { name: "池袋本町公園",          lat: 35.73978, lng: 139.71364 },
+    { name: "雑司が谷一丁目公園",      lat: 35.72062, lng: 139.72150 },
+    { name: "雑司が谷公園",          lat: 35.71864, lng: 139.71642 },
+    { name: "雑司が谷みみずく公園",     lat: 35.72192, lng: 139.71371 },
+    { name: "高田第二公園",          lat: 35.71309, lng: 139.72090 },
+    { name: "山吹の里公園",          lat: 35.71413, lng: 139.71806 },
+    { name: "高田公園",            lat: 35.71536, lng: 139.71506 },
+    { name: "高田第三公園",          lat: 35.71515, lng: 139.70723 },
+    { name: "高田中央三丁目公園",      lat: 35.71617, lng: 139.71097 },
+    { name: "目白三丁目公園",        lat: 35.72311, lng: 139.70627 },
+    { name: "椎名町公園",           lat: 35.72582, lng: 139.69331 },
+    { name: "南長崎花咲公園",        lat: 35.72430, lng: 139.68665 },
+    { name: "南長崎公園",           lat: 35.72683, lng: 139.68835 },
+    { name: "南長崎はらっぱ公園",      lat: 35.72842, lng: 139.67993 },
+    { name: "長崎公園",            lat: 35.73097, lng: 139.68803 },
+    { name: "長五さくら公園",        lat: 35.73376, lng: 139.68375 },
+    { name: "千早フラワー公園",       lat: 35.73128, lng: 139.69350 },
+    { name: "千早第二公園",          lat: 35.73226, lng: 139.69672 },
+    { name: "千早公園",            lat: 35.73489, lng: 139.69057 },
+    { name: "千早緑地公園",          lat: 35.73446, lng: 139.68881 },
+    { name: "千早二丁目公園",        lat: 35.73513, lng: 139.68858 },
+    { name: "千早四丁目なかよし公園",   lat: 35.73785, lng: 139.68356 },
+    { name: "千早四丁目公園",        lat: 35.73857, lng: 139.68506 },
+    { name: "千川親水公園",          lat: 35.73743, lng: 139.68663 },
+    { name: "ふるさと千川ひろば",      lat: 35.74070, lng: 139.68918 },
+    { name: "千川彫刻公園",          lat: 35.73841, lng: 139.69113 },
+    { name: "南長崎中央公園",        lat: 35.72449, lng: 139.68369 },
+    { name: "池本だんだん公園",       lat: 35.74348, lng: 139.71011 },
+    { name: "としまみどりの防災公園",   lat: 35.72778, lng: 139.72185 },
+    { name: "目白庭園",            lat: 35.72418, lng: 139.70547 },
+    { name: "谷端川南緑道",          lat: 35.72675, lng: 139.69954 },
+    { name: "谷端川北緑道",          lat: 35.74500, lng: 139.71027 },
+    { name: "いけぶくろ吾の里", lat: 35.739639, lng: 139.707779 },
+    { name: "ぶどうの木", lat: 35.74165, lng: 139.712708 },
+    { name: "ロールス", lat: 35.742767, lng: 139.713699 },
+    { name: "豊島清掃事務所", lat: 35.737816, lng: 139.713181 },
+    { name: "本町ホール", lat: 35.743172, lng: 139.713745 },
+    { name: "北池薬局", lat: 35.740776, lng: 139.713486 },
+    { name: "区営ライブピア池袋本町", lat: 35.742123, lng: 139.710999 },
+    { name: "埼玉とうふ店", lat: 35.73679, lng: 139.704926 },
+    { name: "トヨタモビリティ東京上池袋店", lat: 35.737293, lng: 139.720749 },
+    { name: "喫茶売店メリー", lat: 35.740276, lng: 139.720428 },
+    { name: "特別養護老人ホーム東池袋桑の実園", lat: 35.728359, lng: 139.725815 },
+    { name: "CHILLAX BURGERS&WINE", lat: 35.732853, lng: 139.715836 },
+    { name: "iZ COFFEE ROASTER", lat: 35.730667, lng: 139.724426 },
+    { name: "ひがいけポンド", lat: 35.726933, lng: 139.720901 },
+    { name: "東池袋フレイル対策センター", lat: 35.732029, lng: 139.721313 },
+    { name: "特別養護老人ホーム菊かおる園", lat: 35.738995, lng: 139.728317 },
+    { name: "医療法人社団幸和会やまとむら歯科", lat: 35.732876, lng: 139.742325 },
+    { name: "磯揚げまる天巣鴨店", lat: 35.735943, lng: 139.734604 },
+    { name: "幹庵", lat: 35.738747, lng: 139.730835 },
+    { name: "めぐみ薬局", lat: 35.736675, lng: 139.730133 },
+    { name: "巣鴨湯", lat: 35.738403, lng: 139.730011 },
+    { name: "医療法人社団幸和会駒一クリニック", lat: 35.73407, lng: 139.748581 },
+    { name: "NIKI BAKERY駒込店", lat: 35.735435, lng: 139.747208 },
+    { name: "CoCo壱番屋豊島駒込店", lat: 35.738598, lng: 139.746384 },
+    { name: "巣鴨信用金庫駒込支店", lat: 35.737312, lng: 139.746246 },
+    { name: "ファミリーマート駒込本郷通り店", lat: 35.738701, lng: 139.746155 },
+    { name: "駒込生活実習所・駒込福祉作業所", lat: 35.734795, lng: 139.742294 },
+    { name: "みさわ整骨院", lat: 35.741058, lng: 139.742813 },
+    { name: "染井コミュニティセンター", lat: 35.741211, lng: 139.741547 },
+    { name: "玉子屋牛肉店", lat: 35.740845, lng: 139.743469 },
+    { name: "医療法人社団幸和会幸クリニック", lat: 35.741219, lng: 139.742554 },
+    { name: "サカガミ駒込店", lat: 35.740765, lng: 139.743851 },
+    { name: "温澤珈琲", lat: 35.741199, lng: 139.744003 },
+    { name: "清水製麺所", lat: 35.741726, lng: 139.740646 },
+    { name: "カフェレネット", lat: 35.741798, lng: 139.740585 },
+    { name: "イトーフラワー", lat: 35.734001, lng: 139.730042 },
+    { name: "渋谷歯科医院", lat: 35.734653, lng: 139.729935 },
+    { name: "粟島神社", lat: 35.736015, lng: 139.691315 },
+    { name: "西部区民事務所ベンチ", lat: 35.735889, lng: 139.691254 },
+    { name: "グランダ要町", lat: 35.733673, lng: 139.692825 },
+    { name: "チチブ薬局", lat: 35.727089, lng: 139.694275 },
+    { name: "巣鴨信用金庫椎名町支店", lat: 35.729763, lng: 139.693344 },
+    { name: "LASC", lat: 35.726795, lng: 139.694214 },
+    { name: "ケアフレンド豊島", lat: 35.727856, lng: 139.690399 },
+    { name: "いろり薬局東長崎店", lat: 35.730274, lng: 139.683929 },
+    { name: "松露ことぶきや", lat: 35.729679, lng: 139.684616 },
+    { name: "名前はまだない珈琲店", lat: 35.729351, lng: 139.684479 },
+    { name: "特別養護老人ホームアトリエ村", lat: 35.729916, lng: 139.686371 },
+    { name: "長崎調剤薬局", lat: 35.731155, lng: 139.683701 },
+    { name: "ラヴィアンサンブル", lat: 35.72871, lng: 139.682648 },
+    { name: "ハウステーション東長崎店", lat: 35.728481, lng: 139.68251 },
+    { name: "喫茶店まあさ", lat: 35.728371, lng: 139.682434 },
+    { name: "ヒバリ薬局", lat: 35.728958, lng: 139.682541 },
+    { name: "ミロクの里鍼灸院", lat: 35.728718, lng: 139.683273 },
+    { name: "ニチイホーム目白", lat: 35.725555, lng: 139.707474 },
+    { name: "IKE・Biz", lat: 35.727669, lng: 139.706528 },
+    { name: "西池袋のおうちパンやIZUMI", lat: 35.72813, lng: 139.705475 },
+    { name: "五色湯", lat: 35.724979, lng: 139.695862 },
+    { name: "Vita ricca", lat: 35.723454, lng: 139.711487 },
+    { name: "南池袋介護老人保健施設アバンセ", lat: 35.72163, lng: 139.716415 },
+    { name: "日本福祉教育専門学校高田校舎", lat: 35.714764, lng: 139.708176 },
+    { name: "山吹の里", lat: 35.715916, lng: 139.710678 },
+    { name: "高田介護予防センター", lat: 35.7159, lng: 139.710724 },
+    { name: "小林伸行司法書士事務所", lat: 35.718418, lng: 139.719345 },
+    { name: "都電テーブル雑司が谷店", lat: 35.719158, lng: 139.718323 },
+    { name: "Yuru café", lat: 35.7225, lng: 139.712418 },
+    { name: "雑司が谷みずくの里", lat: 35.718506, lng: 139.717621 },
+];
+
+const toilets = [
+    { name: "巣鴨駅前公衆便所",       lat: 35.73308, lng: 139.73944 },
+    { name: "巣鴨三丁目公衆便所",      lat: 35.73597, lng: 139.73556 },
+    { name: "庚申塚広場公衆便所",      lat: 35.73956, lng: 139.72972 },
+    { name: "大塚駅前公衆便所",        lat: 35.73178, lng: 139.72889 },
+    { name: "池袋駅北口前公衆便所",     lat: 35.73167, lng: 139.71139 },
+    { name: "目白駅前公衆便所",        lat: 35.72131, lng: 139.70694 },
+];
+
+const hazardPolygons = [
+    [[[139.700257,35.733157],[139.700270,35.733090],[139.700407,35.733062],[139.700407,35.733125],[139.700257,35.733157]]],
+    [[[139.700560,35.733767],[139.700555,35.733697],[139.700721,35.733693],[139.700724,35.733750],[139.700560,35.733767]]]
+];
+
+const BENCH_NAMES = new Set([
+    "いけぶくろ吾の里","ぶどうの木","ロールス","豊島清掃事務所","本町ホール",
+    "北池薬局","区営ライブピア池袋本町","埼玉とうふ店","トヨタモビリティ東京上池袋店",
+    "喫茶売店メリー","特別養護老人ホーム東池袋桑の実園","CHILLAX BURGERS&WINE",
+    "iZ COFFEE ROASTER","ひがいけポンド","東池袋フレイル対策センター",
+    "特別養護老人ホーム菊かおる園","医療法人社団幸和会やまとむら歯科",
+    "磯揚げまる天巣鴨店","幹庵","めぐみ薬局","巣鴨湯",
+    "医療法人社団幸和会駒一クリニック","NIKI BAKERY駒込店","CoCo壱番屋豊島駒込店",
+    "巣鴨信用金庫駒込支店","ファミリーマート駒込本郷通り店","駒込生活実習所・駒込福祉作業所",
+    "みさわ整骨院","染井コミュニティセンター","玉子屋牛肉店",
+    "医療法人社団幸和会幸クリニック","サカガミ駒込店","温澤珈琲",
+    "清水製麺所","カフェレネット","イトーフラワー","渋谷歯科医院",
+    "粟島神社","西部区民事務所ベンチ","グランダ要町","チチブ薬局",
+    "巣鴨信用金庫椎名町支店","LASC","ケアフレンド豊島","いろり薬局東長崎店",
+    "松露ことぶきや","名前はまだない珈琲店","特別養護老人ホームアトリエ村",
+    "長崎調剤薬局","ラヴィアンサンブル","ハウステーション東長崎店","喫茶店まあさ",
+    "ヒバリ薬局","ミロクの里鍼灸院","ニチイホーム目白","IKE・Biz",
+    "西池袋のおうちパンやIZUMI","五色湯","Vita ricca","南池袋介護老人保健施設アバンセ",
+    "日本福祉教育専門学校高田校舎","山吹の里","高田介護予防センター",
+    "小林伸行司法書士事務所","都電テーブル雑司が谷店","Yuru café","雑司が谷みずくの里"
+]);
+
+// ═══════════════════════════════════════════════════════
+// 【地図の初期化】
+// Leaflet（地図ライブラリ）を使って画面に地図を表示する。
+// ═══════════════════════════════════════════════════════
+
+// スマートフォンでスクロールが地図以外に伝わらないようにする設定
+document.addEventListener('touchmove', e => {
+    if (e.target.closest('#map') || e.target.id === 'others-menu') return;
+    e.preventDefault();
+}, { passive: false });
+
+// 地図を作成。中心を豊島区（緯度35.736, 経度139.705）、ズームレベル15で表示
+const map = L.map('map', { zoomControl: false }).setView([35.736, 139.705], 15);
+
+// OpenStreetMapの地図タイルを読み込んで地図の背景として表示する
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19, attribution: '&copy; OpenStreetMap'
+}).addTo(map);
+
+// ── 避難所マーカーを地図に全部置く ──
+// forEach = 配列の要素を1つずつ取り出して同じ処理を繰り返す
+// s = 避難所データ1件（name, lat, lng を持つオブジェクト）
+shelters.forEach(s =>
+    L.marker([s.lat, s.lng]).addTo(map)
+     .bindPopup(`<b>🏫 避難所</b><br>${s.name}<br><button onclick="navigateTo(${s.lat},${s.lng},'${s.name}')" style="margin-top:6px;padding:5px 10px;background:#8e44ad;color:white;border:none;border-radius:6px;font-size:12px;cursor:pointer;">🧭 ここへナビ</button>`)
+);
+
+// 公園用アイコン（🌳）とベンチ用アイコン（🪑）をそれぞれ作成
+const parkIcon  = L.divIcon({ html: '<div style="font-size:15px;line-height:1;filter:drop-shadow(0 1px 1px rgba(0,0,0,0.4));">🌳</div>', className: '', iconSize: [18,18], iconAnchor: [9,9] });
+const benchIcon = L.divIcon({ html: '<div style="font-size:15px;line-height:1;filter:drop-shadow(0 1px 1px rgba(0,0,0,0.4));">🪑</div>', className: '', iconSize: [18,18], iconAnchor: [9,9] });
+
+// ── 休憩スポットのマーカーを地図に置く ──
+// BENCH_NAMES に名前があればベンチ、なければ公園として表示
+restSpots.forEach(s => {
+    const isBench = BENCH_NAMES.has(s.name); // Set.has() = その名前がSetに含まれているか確認
+    L.marker([s.lat, s.lng], { icon: isBench ? benchIcon : parkIcon })
+     .addTo(map)
+     .bindPopup(`<b>${isBench ? '🪑 ベンチ設置場所' : '🌳 公園'}</b><br>${s.name}<br><button onclick="navigateTo(${s.lat},${s.lng},'${s.name}')" style="margin-top:6px;padding:5px 10px;background:#8e44ad;color:white;border:none;border-radius:6px;font-size:12px;cursor:pointer;">🧭 ここへナビ</button>`);
+});
+
+// ── 公衆トイレのマーカーを地図に置く ──
+const toiletIcon = L.divIcon({ html: '<div style="font-size:16px;line-height:1;">🚻</div>', className: '', iconSize: [20,20], iconAnchor: [10,10] });
+toilets.forEach(t =>
+    L.marker([t.lat, t.lng], { icon: toiletIcon }).addTo(map)
+     .bindPopup(`<b>🚻 公衆トイレ</b><br>${t.name}`)
+);
+
+// ── 危険エリア（ハザードゾーン）を赤い半透明ポリゴンで地図に表示 ──
+const hazardLayer = L.layerGroup(
+    hazardPolygons.map(poly =>
+        L.polygon(poly[0].map(c => [c[1], c[0]]), { color:'red', fillOpacity:0.5 })
+    )
+);
+
+// ── アプリ全体で使う「状態変数」 ──
+// let = あとで値が変わる変数。null = まだ何もない状態。
+let routeLayer         = null; // 現在表示中のルート（地図上の線）
+let userMarker         = null; // 現在地のマーカー（方向矢印）
+let highlightMarker    = null; // 選ばれた休憩スポットを強調するマーカー
+let currentMode        = 'elderly'; // 現在のモード（'elderly'=高齢者モード, 'normal'=通常モード）
+let compassDeg         = 0;    // 現在の方位角（度）
+let watchId            = null; // geolocation.watchPosition の ID
+let navDestLat         = null; // ナビ中の目的地緯度
+let navDestLng         = null; // ナビ中の目的地経度
+let navSpeedMs         = 0.83; // ナビ中の速度（m/s）：高齢者0.83, 通常1.2
+
+// ── 方向矢印アイコンを生成する関数 ──
+// deg: 北を0として時計回りの角度（度）
+function makeArrowIcon(deg) {
+    return L.divIcon({
+        className: 'arrow-marker',
+        html: `<svg width="40" height="40" viewBox="0 0 40 40" style="transform:rotate(${deg}deg);transition:transform 0.4s ease;">
+            <circle cx="20" cy="20" r="16" fill="#1565C0" fill-opacity="0.2" stroke="#1565C0" stroke-width="2"/>
+            <circle cx="20" cy="20" r="5" fill="#1565C0"/>
+            <polygon points="20,4 25,22 20,18 15,22" fill="#1565C0"/>
+        </svg>`,
+        iconSize: [40, 40],
+        iconAnchor: [20, 20],
+    });
+}
+
+// ── リアルタイム現在地追跡を開始 ──
+// ルートボタンを押す前から常時追跡し、地図に矢印を表示する
+function startLocationWatch() {
+    if (!navigator.geolocation) return;
+    if (watchId !== null) return; // すでに追跡中なら何もしない
+
+    watchId = navigator.geolocation.watchPosition(pos => {
+        const latlng = [pos.coords.latitude, pos.coords.longitude];
+        if (!userMarker) {
+            userMarker = L.marker(latlng, { icon: makeArrowIcon(compassDeg), zIndexOffset: 1000 }).addTo(map);
+        } else {
+            userMarker.setLatLng(latlng);
+            userMarker.setIcon(makeArrowIcon(compassDeg));
+        }
+
+        // ── リアルタイム残り距離・時間の更新 ──
+        // ナビ中（目的地が設定されている）かつ result-box が表示中のときだけ更新
+        if (navDestLat !== null && document.getElementById('result-box').style.display !== 'none') {
+            const remM = haversine(pos.coords.latitude, pos.coords.longitude, navDestLat, navDestLng);
+            const remKm  = (remM / 1000).toFixed(2);
+            const remMin = Math.ceil(remM / navSpeedMs / 60);
+            document.getElementById('dest-dist').innerText = remKm + ' km（残り）';
+            document.getElementById('dest-time').innerText = '約' + remMin + '分（残り）';
+
+            // 目的地まで20m以内なら到着通知
+            if (remM <= 20) {
+                document.getElementById('status-area').innerText = '✅ 避難所に到着しました！';
+                document.getElementById('dest-dist').innerText = '到着';
+                document.getElementById('dest-time').innerText = '0分';
+                navDestLat = null; // 更新を停止
+            }
+        }
+    }, null, { enableHighAccuracy: true, maximumAge: 3000 });
+}
+
+// ── コンパス（方位センサー）のリスナー登録 ──
+function listenCompass() {
+    window.addEventListener('deviceorientation', e => {
+        if (e.alpha === null) return;
+        compassDeg = (360 - e.alpha) % 360;
+        if (userMarker) userMarker.setIcon(makeArrowIcon(compassDeg));
+    }, true);
+    // ボタンを非表示にする
+    const btn = document.getElementById('compass-btn-wrap');
+    if (btn) btn.style.display = 'none';
+}
+
+// ── 🧭 コンパス許可ボタンが押されたとき ──
+function requestCompassPermission() {
+    if (typeof DeviceOrientationEvent === 'undefined') {
+        alert('このデバイスはコンパスに対応していません');
+        return;
+    }
+    if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+        // iOS: ユーザー操作起点で許可を求める
+        DeviceOrientationEvent.requestPermission()
+            .then(state => {
+                if (state === 'granted') {
+                    listenCompass();
+                } else {
+                    alert('コンパスの許可が拒否されました。設定アプリ→Safari→モーションと方向から許可してください。');
+                }
+            })
+            .catch(err => alert('エラー: ' + err));
+    } else {
+        // Android・PCはそのまま
+        listenCompass();
+    }
+}
+
+// ページ読み込み時は現在地追跡だけ開始（コンパスはボタンから）
+startLocationWatch();
+
+// ── バックグラウンドで道路データを事前読み込み ──
+// ユーザーがボタンを押すより前に Overpass API 通信を開始しておく。
+// localStorageキャッシュがあれば即座に完了し、なければ裏で取得を進める。
+// ローディング画面は出さず、エラーも無視する（ボタン押下時に再試行される）。
+(async () => {
+    try {
+        // loading-msg を書き換えないよう、事前取得中は表示を変えない
+        // fetchOSMGraph 内で loading-msg を更新するが、オーバーレイは非表示なので問題なし
+        await fetchOSMGraph();
+        console.log('道路データの事前読み込み完了');
+    } catch (e) {
+        // エラーは無視（ボタン押下時に再試行）
+        console.warn('事前読み込み失敗（ボタン押下時に再試行）:', e);
+    }
+})();
+
+// ── OSM道路グラフのキャッシュ ──
+// 道路データは重いので初回だけ取得してここに保存しておく
+// 2回目以降はこのキャッシュを使うため高速化できる
+// null = まだ取得していない状態
+let osmGraph = null; // { nodes: Map<id, {lat,lng}>, adj: Map<id, [{to, dist}]>, grid: {...} }
+
+// ── 格子インデックス（findNearestNode高速化用）──
+// 豊島区を0.001度（約80m）の格子に分割し、各セルにノードIDを格納する
+// これにより近傍探索がO(N) → O(1)相当に高速化される
+const GRID_STEP = 0.001; // 格子の1辺の大きさ（度）
+function buildGridIndex(nodes) {
+    const grid = new Map();
+    nodes.forEach((node, id) => {
+        const gx = Math.floor(node.lat / GRID_STEP);
+        const gy = Math.floor(node.lng / GRID_STEP);
+        const key = gx + ',' + gy;
+        if (!grid.has(key)) grid.set(key, []);
+        grid.get(key).push(id);
+    });
+    return grid;
+}
+
+// 格子インデックスを使った高速最近傍検索
+// 探索半径を1セルずつ広げ、候補が見つかり次第返す
+function findNearestNodeFast(lat, lng, nodes, grid) {
+    const gx0 = Math.floor(lat / GRID_STEP);
+    const gy0 = Math.floor(lng / GRID_STEP);
+
+    let bestId = null;
+    let bestDist = Infinity;
+
+    // 半径0から始め、候補が見つかったら1段広げて打ち切る
+    for (let r = 0; r <= 3; r++) {
+        for (let dx = -r; dx <= r; dx++) {
+            for (let dy = -r; dy <= r; dy++) {
+                // 外周セルのみ調べる（内側は既に調べ済み）
+                if (r > 0 && Math.abs(dx) < r && Math.abs(dy) < r) continue;
+                const key = (gx0 + dx) + ',' + (gy0 + dy);
+                const ids = grid.get(key);
+                if (!ids) continue;
+                for (const id of ids) {
+                    const node = nodes.get(id);
+                    const d = haversine(lat, lng, node.lat, node.lng);
+                    if (d < bestDist) { bestDist = d; bestId = id; }
+                }
+            }
+        }
+        // r=0で候補が見つかれば、r=1（隣接セル）まで確認して打ち切り
+        if (r >= 1 && bestId !== null) break;
+    }
+
+    // フォールバック: 格子で見つからない場合は線形探索
+    if (bestId === null) {
+        nodes.forEach((node, id) => {
+            const d = haversine(lat, lng, node.lat, node.lng);
+            if (d < bestDist) { bestDist = d; bestId = id; }
+        });
+    }
+    return bestId;
+}
+
+// ═══════════════════════════════════════════════════════
+// 【ハversine距離計算】
+// 地球上の2点間の「球面上の直線距離（最短距離）」をメートル単位で返す関数。
+//
+// なぜ普通の計算じゃダメなの？
+//   地球は丸いので、緯度・経度の差をそのまま使うと誤差が大きくなる。
+//   Haversine公式は「球面三角法」を使い、地球の丸みを考慮した正確な距離を出す。
+//
+// 引数:
+//   lat1, lng1 : 1点目の緯度・経度（度数法）
+//   lat2, lng2 : 2点目の緯度・経度（度数法）
+// 返り値:
+//   2点間の距離（メートル）
+// ═══════════════════════════════════════════════════════
+function haversine(lat1, lng1, lat2, lng2) {
+    // 地球の半径（メートル）。地球は完全な球ではないが近似値として使う
+    const R = 6371000;
+
+    // 緯度・経度を「度数法（°）」から「ラジアン法（rad）」に変換する
+    // コンピュータの数学関数（sin, cos）はラジアンで計算するため変換が必要
+    // 変換式：ラジアン = 度数 × π ÷ 180
+    const φ1 = lat1 * Math.PI / 180; // 1点目の緯度（ラジアン）
+    const φ2 = lat2 * Math.PI / 180; // 2点目の緯度（ラジアン）
+    const Δφ = (lat2 - lat1) * Math.PI / 180; // 緯度の差（ラジアン）
+    const Δλ = (lng2 - lng1) * Math.PI / 180; // 経度の差（ラジアン）
+
+    // Haversine公式の計算（球面上の角距離を求める中間値 a）
+    // sin(θ/2)² + cos(φ1)×cos(φ2)×sin(Δλ/2)² という式
+    // aが0に近いほど2点は近く、1に近いほど遠い
+    const a = Math.sin(Δφ/2) * Math.sin(Δφ/2)
+            + Math.cos(φ1) * Math.cos(φ2)
+            * Math.sin(Δλ/2) * Math.sin(Δλ/2);
+
+    // atan2で角距離を計算し、地球半径Rをかけてメートルに変換して返す
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+// ═══════════════════════════════════════════════════════
+// 【OSM道路グラフの取得と構築】
+//
+// OpenStreetMap（OSM）とは？
+//   世界中のボランティアが作成している地図データ。
+//   道路・建物・公園などの情報が「ノード」と「ウェイ」で記録されている。
+//   ・ノード（Node）: 交差点や道の曲がり角など「点」の情報（緯度・経度を持つ）
+//   ・ウェイ（Way）: ノードをつなぐ「道路の線」の情報
+//
+// グラフとは？
+//   数学・コンピュータ科学で「点（ノード）と線（エッジ）のつながり」のこと。
+//   道路ネットワーク = グラフとして表現できる。
+//   ダイクストラ法はこのグラフ上で最短経路を探す。
+//
+// Overpass APIとは？
+//   OSMのデータを「クエリ（質問文）」で取得できるサービス。
+//   例：「豊島区の歩道を全部ください」という質問に答えてくれる。
+//
+// この関数がやること:
+//   1. Overpass APIに豊島区の道路データをリクエスト
+//   2. ノード（交差点）をMapに格納
+//   3. ウェイ（道路）から隣接リスト（adj）を作成
+//   4. 階段は高齢者が通りにくいためコストを5倍にする
+//   5. 結果を osmGraph にキャッシュして返す
+//
+// async/await とは？
+//   インターネット通信など「時間がかかる処理」を待つための仕組み。
+//   await をつけると「データが届くまで待ってから次へ進む」という意味になる。
+// ═══════════════════════════════════════════════════════
+// localStorage キャッシュのキーと有効期限（7日）
+const OSM_CACHE_KEY = 'osmGraph_toshima_v1';
+const OSM_CACHE_TTL = 7 * 24 * 60 * 60 * 1000; // 7日（ミリ秒）
+
+async function fetchOSMGraph() {
+    // ── メモリキャッシュ確認（同一セッション内）──
+    if (osmGraph) return osmGraph;
+
+    // ── localStorageキャッシュ確認（前回起動時のデータ）──
+    try {
+        const cached = localStorage.getItem(OSM_CACHE_KEY);
+        if (cached) {
+            const { timestamp, nodesArr, adjArr } = JSON.parse(cached);
+            if (Date.now() - timestamp < OSM_CACHE_TTL) {
+                document.getElementById('loading-msg').textContent = 'キャッシュから道路データを読み込み中…';
+                const nodes = new Map(nodesArr);
+                const adj   = new Map(adjArr.map(([k, v]) => [k, v]));
+                const grid  = buildGridIndex(nodes); // 格子インデックスを再構築
+                osmGraph = { nodes, adj, grid };
+                return osmGraph;
+            }
+        }
+    } catch (e) {
+        console.warn('localStorageキャッシュ読み込み失敗:', e);
+    }
+
+    document.getElementById('loading-msg').textContent = '道路データを取得中… 0%（初回のみ）';
+
+    // ── Overpass APIへのクエリ（質問文）を作成 ──
+    // 豊島区（緯度35.710〜35.755、経度139.670〜139.760）内で
+    // 歩行者が通れるすべての道路種別を取得する
+    // highway= の値の意味：
+    //   footway   = 歩道専用路
+    //   pedestrian = 歩行者専用区域
+    //   path      = 未舗装の小道
+    //   residential = 住宅街の道路
+    //   tertiary  = 区道レベルの道路
+    //   steps     = 階段（このアプリでは高コストを設定）
+    //   ほか living_street, service, secondary, primary など
+    const query = `
+[out:json][timeout:60];
+(
+  way["highway"~"^(footway|pedestrian|path|residential|unclassified|tertiary|secondary|primary|living_street|service|steps|track)$"]
+    (35.710,139.670,35.755,139.760);
+);
+out body;
+>;
+out skel qt;
+`;
+
+    // ── Overpass APIにPOSTリクエストを送信 ──
+    // fetchはブラウザ組み込みのHTTP通信関数
+    // awaitで「応答が届くまで待つ」
+    // Overpass APIのミラー一覧（1つ目が失敗したら2つ目を試す）
+    const mirrors = [
+        'https://overpass-api.de/api/interpreter',
+        'https://overpass.kumi.systems/api/interpreter',
+    ];
+
+    let res = null;
+    for (const url of mirrors) {
+        try {
+            document.getElementById('loading-msg').textContent = `道路データを取得中… (${url.includes('kumi') ? 'ミラー' : 'メイン'})`;
+            // 90秒タイムアウト付きでリクエスト
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), 90000);
+            res = await fetch(url, {
+                method: 'POST',
+                body: 'data=' + encodeURIComponent(query),
+                signal: controller.signal,
+            });
+            clearTimeout(timer);
+            if (res.ok) break; // 成功したらループ終了
+        } catch (e) {
+            if (e.name === 'AbortError') {
+                console.warn(url + ' タイムアウト、次のミラーを試します');
+                continue;
+            }
+            throw e;
+        }
+    }
+    if (!res || !res.ok) throw new Error('Overpass API error: すべてのサーバーに接続できませんでした');
+
+    // ── 受け取ったJSONデータを解析 ──
+    // res.json() = サーバーから届いたJSONテキストをJavaScriptオブジェクトに変換
+    const data = await res.json();
+    document.getElementById('loading-msg').textContent = 'データを解析中… 30%';
+    // ── グラフのデータ構造を初期化 ──
+    // nodes = Map（辞書型）: ノードID → { lat（緯度）, lng（経度）}
+    // adj   = Map（辞書型）: ノードID → [隣接するノードのリスト]
+    //
+    // Mapとは？
+    //   キーと値のペアを管理するデータ構造。
+    //   map.set(key, value) で追加、map.get(key) で取得できる。
+    const nodes = new Map();
+    const adj   = new Map();
+
+    // ── Step1: ノードを登録 ──
+    // OSMデータの中の type:"node" 要素（交差点・曲がり角）を全部登録する
+    data.elements.forEach(el => {
+        if (el.type === 'node') {
+            // ノードIDをキーとして緯度経度を保存
+            nodes.set(el.id, { lat: el.lat, lng: el.lon });
+            // 隣接リストも空の配列で初期化
+            adj.set(el.id, []);
+        }
+    });
+    document.getElementById('loading-msg').textContent = 'ノードを登録中… 60%';
+    // ── Step2: ウェイ（道路）からエッジ（辺）を生成 ──
+    // ウェイは「ノードIDの配列」として記録されている
+    // 例: ウェイ = [A, B, C, D] → エッジは A-B, B-C, C-D の3本
+    // 道路は双方向（行きも帰りも通れる）なので、両方向のエッジを追加する
+    data.elements.forEach(el => {
+        if (el.type !== 'way') return; // ウェイ以外はスキップ
+
+        // 階段かどうかを確認
+        // 高齢者は階段が苦手なので、階段のコストを5倍にして迂回を促す
+        const isSteps = el.tags && el.tags.highway === 'steps';
+
+        const nds = el.nodes; // このウェイを構成するノードIDの配列
+
+        // 隣接するノードのペア（A→B, B→C, C→D...）をループ
+        for (let i = 0; i < nds.length - 1; i++) {
+            const a = nds[i];     // 始点ノードID
+            const b = nds[i + 1]; // 終点ノードID
+
+            // どちらかのノードが登録されていなければスキップ（データ不整合対策）
+            if (!nodes.has(a) || !nodes.has(b)) continue;
+
+            const na = nodes.get(a); // 始点ノードの座標
+            const nb = nodes.get(b); // 終点ノードの座標
+
+            // 2点間の実際の距離（メートル）をHaversine公式で計算
+            const d = haversine(na.lat, na.lng, nb.lat, nb.lng);
+
+            // 階段は高齢者避難で不利なためコストを5倍に設定
+            // ダイクストラ法はコストが小さい道を優先するため、自動的に階段を迂回する
+            const cost = isSteps ? d * 5 : d;
+
+            // 双方向エッジを追加（A→Bとと B→A の両方）
+            adj.get(a).push({ to: b, dist: cost, realDist: d });
+            adj.get(b).push({ to: a, dist: cost, realDist: d });
+        }
+    });
+    document.getElementById('loading-msg').textContent = 'ルートを構築中… 85%';
+    // ── グラフをメモリにキャッシュ（格子インデックスも構築）──
+    const grid = buildGridIndex(nodes);
+    document.getElementById('loading-msg').textContent = '完了！ 100%';
+    osmGraph = { nodes, adj, grid };
+
+    // ── localStorageにも保存（次回起動時に使い回す）──
+    try {
+        const nodesArr = [...nodes.entries()];
+        const adjArr   = [...adj.entries()];
+        localStorage.setItem(OSM_CACHE_KEY, JSON.stringify({
+            timestamp: Date.now(),
+            nodesArr,
+            adjArr,
+        }));
+        console.log('道路データをlocalStorageに保存しました');
+    } catch (e) {
+        // ストレージ容量超過などは無視して続行
+        console.warn('localStorageへの保存失敗:', e);
+    }
+
+    return osmGraph;
+}
+
+// ═══════════════════════════════════════════════════════
+// 【最近傍ノード検索】
+//
+// なぜこの関数が必要なの？
+//   ダイクストラ法はグラフ上の「ノード（交差点）」を出発点にする。
+//   しかし、ユーザーの現在地や避難所は道路のど真ん中ではなく
+//   「道から少し離れた場所」にあることが多い。
+//   → 現実の座標を「最も近い道路ノード」に対応付ける処理が必要。
+//
+// 動作:
+//   全ノードを調べ、指定した緯度・経度に最も近いノードのIDを返す。
+//   全探索（linear scan）なので O(N)。
+//   豊島区の道路ノード数は数万〜数十万あるが、一度の呼び出しで済むため問題ない。
+//
+// 引数:
+//   lat, lng : 探したい地点の緯度・経度
+//   nodes    : グラフのノードマップ（id → {lat, lng}）
+// 返り値:
+//   最近傍ノードのID
+// ═══════════════════════════════════════════════════════
+function findNearestNode(lat, lng, nodes) {
+    let bestId   = null;      // 現時点で最も近いノードのID（最初はまだ決まっていない）
+    let bestDist = Infinity;  // 現時点の最小距離（Infinity = 無限大。最初は「どんな距離より遠い」状態）
+
+    // 全ノードを1つずつ調べる（node=座標情報, id=ノードID）
+    nodes.forEach((node, id) => {
+        // このノードと指定地点の距離を計算
+        const d = haversine(lat, lng, node.lat, node.lng);
+
+        // 今まで見つけた最小距離より近ければ更新する
+        if (d < bestDist) {
+            bestDist = d;  // 最小距離を更新
+            bestId   = id; // 最近傍ノードのIDを更新
+        }
+    });
+
+    return bestId; // 最も近いノードのIDを返す
+}
+
+// ═══════════════════════════════════════════════════════
+// 【ダイクストラ法（自作実装）】
+//
+// ダイクストラ法とは？
+//   「重み付きグラフにおける最短経路問題」を解くアルゴリズム。
+//   1956年にエドガー・ダイクストラが考案した。
+//
+// 基本的な考え方:
+//   「今まで分かっている最短距離が小さい順に、ノードを確定していく」
+//
+//   コスト g(n) = スタートからノードnまでの最短道路距離
+//   ダイクストラ法は f(n) = g(n) のみで動く（予測なし）
+//   → すべての方向を均等に探索し、確実に最短経路を見つける
+//
+// 優先度付きキュー（Priority Queue）とは？
+//   「コストが小さいものから順に処理する」仕組み。
+//   このコードでは配列 + sort() で簡易実装している。
+//   （大規模な場合はバイナリヒープという構造を使うと高速になる）
+//
+// このアプリでの使い方:
+//   スタート（現在地）から全方向に探索し、
+//   すべての避難所ノードへの最短距離を計算する。
+//   → キューが空になるまで探索し、最も近い避難所1か所を選ぶ。
+//
+// 引数:
+//   startNodeId : スタートのノードID（現在地の最近傍ノード）
+//   goalSet     : Map<ノードID, 避難所オブジェクト>（全避難所のマップ）
+//   graph       : { nodes, adj }（道路グラフ）
+//
+// 返り値:
+//   [{ shelter, path, distM, distCost }, ...]
+//   道路距離が近い順（全避難所分）
+// ═══════════════════════════════════════════════════════
+// ── MinHeap（二分ヒープ）実装 ──
+// queue.sort() の代わりに使う優先度付きキュー
+// push/pop が O(log N) で動作し、毎ループのソート O(N log N) を排除できる
+class MinHeap {
+    constructor() { this.h = []; }
+    push(cost, id) {
+        this.h.push([cost, id]);
+        this._up(this.h.length - 1);
+    }
+    pop() {
+        const top = this.h[0];
+        const last = this.h.pop();
+        if (this.h.length > 0) { this.h[0] = last; this._down(0); }
+        return top;
+    }
+    get size() { return this.h.length; }
+    _up(i) {
+        while (i > 0) {
+            const p = (i - 1) >> 1;
+            if (this.h[p][0] <= this.h[i][0]) break;
+            [this.h[p], this.h[i]] = [this.h[i], this.h[p]];
+            i = p;
+        }
+    }
+    _down(i) {
+        const n = this.h.length;
+        while (true) {
+            let m = i, l = 2*i+1, r = 2*i+2;
+            if (l < n && this.h[l][0] < this.h[m][0]) m = l;
+            if (r < n && this.h[r][0] < this.h[m][0]) m = r;
+            if (m === i) break;
+            [this.h[m], this.h[i]] = [this.h[i], this.h[m]];
+            i = m;
+        }
+    }
+}
+
+function dijkstra(startNodeId, goalSet, graph) {
+    // graph から nodes（ノード座標）と adj（隣接リスト）を取り出す
+    const { nodes, adj } = graph;
+
+    // ── データ構造の初期化 ──
+
+    // gCost: 各ノードへの「現時点での最短コスト」を記録するMap
+    // 初期値はすべて Infinity（まだどこにも到達していない状態）
+    const gCost = new Map();
+
+    // prev: 経路復元のための「直前のノード」を記録するMap
+    const prev  = new Map();
+
+    // スタートノードのコストは 0
+    gCost.set(startNodeId, 0);
+
+    // 優先度付きキュー（二分ヒープ）: queue.sort() より大幅に高速
+    const heap = new MinHeap();
+    heap.push(0, startNodeId);
+
+    // 見つかった避難所を格納するリスト
+    const found = [];
+    let remainingGoals = goalSet.size; // 未発見の避難所数
+
+    // ── メインループ ──
+    // 全避難所を発見するかキューが空になるまで繰り返す
+    while (heap.size > 0) {
+
+        // Step1: コスト最小のノードをヒープから取り出す（O(log N)）
+        const [cost, u] = heap.pop();
+
+        // Step2: 古い（無効な）エントリをスキップ
+        if (cost > (gCost.get(u) ?? Infinity)) continue;
+
+        // Step3: このノードが避難所かどうか確認
+        if (goalSet.has(u)) {
+            found.push({
+                shelter:  goalSet.get(u),
+                distCost: cost,
+                nodeId:   u
+            });
+            remainingGoals--;
+            // 全避難所を発見したら早期終了（不要な探索を省く）
+            if (remainingGoals === 0) break;
+        }
+
+        // Step4: 隣接ノードのコストを更新（緩和操作）
+        const neighbors = adj.get(u) || [];
+        for (const edge of neighbors) {
+            const v = edge.to;
+            const newCost = cost + edge.dist;
+            const oldCost = gCost.get(v) ?? Infinity;
+
+            if (newCost < oldCost) {
+                gCost.set(v, newCost);
+                prev.set(v, u);
+                heap.push(newCost, v); // ヒープに追加（O(log N)）
+            }
+        }
+    }
+    // ダイクストラ法ここまで。found に近い順の避難所が入っている。
+
+    // ── 経路復元 ──
+    // prev マップをたどることで、各避難所へのルートを再現する
+    // 避難所ノードから prev をたどって先頭（スタート）まで逆向きに進む
+    return found.map(item => {
+        const path = []; // スタートから避難所までのノードID列
+        let cur = item.nodeId; // 現在位置（最初は避難所ノード）
+
+        // prev.get(cur) が undefined（=スタートノード）になるまでさかのぼる
+        while (cur !== undefined) {
+            path.unshift(cur); // 配列の先頭に追加（逆向きに追加 → 最終的にスタート→避難所の順になる）
+            cur = prev.get(cur); // 1つ前のノードへ
+        }
+
+        // 実際の距離（メートル）を計算する
+        // ※ distCost はコスト（階段5倍含む）なので、実距離とは異なる
+        // 経路上の隣接ノード間のHaversine距離を全部足し合わせる
+        let realDist = 0;
+        for (let i = 0; i < path.length - 1; i++) {
+            const na = nodes.get(path[i]);
+            const nb = nodes.get(path[i + 1]);
+            if (na && nb) realDist += haversine(na.lat, na.lng, nb.lat, nb.lng);
+        }
+
+        // この避難所への情報を返す
+        return {
+            shelter:  item.shelter,  // 避難所情報（名前・座標）
+            path,                    // ノードID列（スタート → 避難所）
+            distM:    realDist,      // 実際の道路距離（m）
+            distCost: item.distCost  // アルゴリズム上のコスト（参考値）
+        };
+    });
+}
+
+// ═══════════════════════════════════════════════════════
+// 【休憩スポット挿入】
+//
+// この関数の目的:
+//   高齢者が長距離を歩くとき、定期的に休憩できる場所（公園・ベンチ）を
+//   ルート上に自動で提案する。
+//
+// 動作の流れ:
+//   1. 経路（ノードのリスト）を先頭から順にたどり、各ノードの累積距離を計算
+//   2. 累積距離が REST_INTERVAL_M（500m）に達するたびにチェック
+//   3. その地点から MAX_DETOUR_M（100m）以内に休憩スポットがあれば挿入
+//   4. 出発地・目的地に近すぎる場所（MIN_ENDPOINT_DIST_M = 50m以内）は除外
+//
+// 引数:
+//   path  : ノードIDの配列（ダイクストラ法で求めた経路）
+//   nodes : ノードIDから座標情報を引くMap
+// 返り値:
+//   { waypoints: [休憩スポットの配列], restNames: [スポット名の配列] }
+// ═══════════════════════════════════════════════════════
+function insertRestSpots(path, nodes) {
+    // ノードが1つ以下（経路がない）なら処理不要
+    if (path.length < 2) return { waypoints: [], restNames: [] };
+
+    // ── Step1: 累積距離を計算 ──
+    // cumDist[i] = 経路の先頭ノードからi番目のノードまでの距離（m）
+    // 例: [0, 120, 250, 430, 600, ...] のような配列
+    const cumDist = [0]; // 先頭ノードは0m
+    for (let i = 1; i < path.length; i++) {
+        const na = nodes.get(path[i - 1]); // 前のノードの座標
+        const nb = nodes.get(path[i]);     // 現在のノードの座標
+        // 前の累積距離 + この区間の距離 = 現在の累積距離
+        cumDist.push(cumDist[i - 1] + haversine(na.lat, na.lng, nb.lat, nb.lng));
+    }
+    const totalDist = cumDist[cumDist.length - 1]; // 総距離（m）
+
+    const waypoints = []; // 最終的に挿入する休憩スポットのリスト
+    const restNames = []; // 同じスポットを重複追加しないための名前リスト
+
+    // ── Step2: 500m ごとにチェック ──
+    // nextThreshold = 次に休憩スポットを探す目標距離
+    // 最初は500m、次は1000m、1500m... と増えていく
+    let nextThreshold = REST_INTERVAL_M; // 最初の目標: 500m
+
+    // 目的地の直前（MIN_ENDPOINT_DIST_M以内）まで繰り返す
+    while (nextThreshold < totalDist - MIN_ENDPOINT_DIST_M) {
+
+        // ── Step3: nextThreshold の前後 REST_INTERVAL_M/2 の範囲に含まれるノードを収集 ──
+        // アンカー1点だけだと見落としが多いため、範囲内の全ノードを候補にする
+        const windowM = REST_INTERVAL_M / 2; // 前後250m
+        const windowNodes = [];
+        for (let i = 0; i < path.length; i++) {
+            if (Math.abs(cumDist[i] - nextThreshold) <= windowM) {
+                windowNodes.push(nodes.get(path[i]));
+            }
+        }
+        // 範囲内のノードが1つもなければ従来通り最近傍1点を使う
+        if (windowNodes.length === 0) {
+            let closestIdx = 0, minDiff = Infinity;
+            for (let i = 0; i < path.length; i++) {
+                const diff = Math.abs(cumDist[i] - nextThreshold);
+                if (diff < minDiff) { minDiff = diff; closestIdx = i; }
+            }
+            windowNodes.push(nodes.get(path[closestIdx]));
+        }
+
+        // ── Step4: 範囲内の全ノードからMAX_DETOUR_M以内の休憩スポットを探す ──
+        // 範囲内のどのノードからでも近ければOKにすることで見落としを防ぐ
+        let bestSpot  = null;
+        let bestSpotD = Infinity;
+
+        for (const spot of restSpots) {
+            // 範囲内の全ノードとの距離を調べ、最も近いノードからの距離を使う
+            for (const anchorNode of windowNodes) {
+                const d = haversine(anchorNode.lat, anchorNode.lng, spot.lat, spot.lng);
+                if (d < MAX_DETOUR_M && d < bestSpotD) {
+                    bestSpotD = d;
+                    bestSpot  = spot;
+                }
+            }
+        }
+
+        // ── Step5: 見つかったスポットをリストに追加 ──
+        // 同じスポットが重複して追加されないよう、名前で確認
+        if (bestSpot && !restNames.includes(bestSpot.name)) {
+            waypoints.push(bestSpot);      // スポット情報を追加
+            restNames.push(bestSpot.name); // 名前リストにも追加（重複防止）
+        }
+
+        // 次の目標距離へ（500m → 1000m → 1500m ...）
+        nextThreshold += REST_INTERVAL_M;
+    }
+
+    // 見つかった休憩スポットのリストを返す
+    return { waypoints, restNames };
+}
+
+// ═══════════════════════════════════════════════════════
+// 【地図上へのルート描画】
+//
+// ダイクストラ法で求めた「ノードIDの配列（path）」を
+// Leafletが理解できる「緯度・経度の配列」に変換して、
+// 地図上に線（ポリライン）として描画する。
+//
+// Leafletのポリラインとは？
+//   複数の点（緯度・経度）をつなぐ折れ線を地図に描く機能。
+//   L.polyline([[lat1,lng1],[lat2,lng2],...]) で作成できる。
+//
+// 引数:
+//   path  : ノードIDの配列（スタートから避難所まで順番に並ぶ）
+//   nodes : ノードIDから座標を引くMap
+//   color : ルートの色（高齢者モード=赤, 通常モード=青, 手動ナビ=紫）
+// 返り値:
+//   作成したルートレイヤー（後で削除するために使う）
+// ═══════════════════════════════════════════════════════
+function drawRoute(path, nodes, color) {
+    // ── ノードID → [緯度, 経度] に変換 ──
+    // .map(id => nodes.get(id)) : IDを座標オブジェクト {lat, lng} に変換
+    // .filter(n => n)           : 座標が見つからなかった（undefined）ノードを除外
+    // .map(n => [n.lat, n.lng]) : {lat, lng} を [lat, lng] の配列形式に変換
+    //                             （Leafletは [緯度, 経度] の配列を要求する）
+    const latlngs = path
+        .map(id => nodes.get(id))  // IDを座標に変換
+        .filter(n => n)            // nullや undefinedを除去
+        .map(n => [n.lat, n.lng]); // [lat, lng] 形式に変換
+
+    // ── 前のルートを削除 ──
+    // 前回のルートが表示されたままだと重複するため、事前に削除する
+    if (routeLayer) map.removeLayer(routeLayer);
+
+    // ── 新しいルートを地図に描画 ──
+    // L.polyline(): 折れ線を描く
+    //   color   : 線の色
+    //   weight  : 線の太さ（px）
+    //   opacity : 透明度（0=完全透明, 1=不透明）
+    // .addTo(map): 地図に追加
+    routeLayer = L.polyline(latlngs, { color, weight: 8, opacity: 0.8 }).addTo(map);
+    return routeLayer; // 後で地図から削除できるようにレイヤーを返す
+}
+
+// ═══════════════════════════════════════════════════════
+// 【UI操作関数】
+// ═══════════════════════════════════════════════════════
+
+// ── 「その他のルート」メニューの開閉 ──
+// ボタンを押すたびにメニューの表示・非表示を切り替える（トグル動作）
+function toggleOthers() {
+    const menu = document.getElementById('others-menu'); // メニューのHTML要素を取得
+    const btn  = document.querySelector('.btn-toggle-others'); // ボタンのHTML要素を取得
+
+    // 現在表示されているかどうかを確認（'block' = 表示中）
+    const open = menu.style.display === 'block';
+
+    // 表示中なら非表示に、非表示なら表示に切り替える（三項演算子）
+    menu.style.display = open ? 'none' : 'block';
+
+    // ボタンのテキストも切り替える（開いているなら「閉じる」、閉じているなら「開く」）
+    btn.innerText = open ? "その他のルートを開く ▼" : "閉じる ▲";
+}
+
+// ── 緊急避難ボタン（🆘）が押されたとき ──
+// 「高齢者モード（階段回避・休憩あり）」でルート検索を開始する
+function quickEvacuate() { startMode('elderly'); }
+
+// ── ルート検索モードを開始 ──
+// mode: 'elderly'（高齢者モード）または 'normal'（通常モード）
+function startMode(mode) {
+    currentMode = mode; // 選択されたモードをグローバル変数に保存
+
+    // 高齢者モードなら危険エリア（ハザードゾーン）を地図に表示する
+    // 通常モード・via-restモードなら危険エリアを非表示にする
+    if (mode === 'elderly') {
+        // map.hasLayer() = 指定したレイヤーが地図に追加されているか確認
+        if (!map.hasLayer(hazardLayer)) hazardLayer.addTo(map); // 追加されていなければ追加
+    } else {
+        if (map.hasLayer(hazardLayer)) map.removeLayer(hazardLayer); // 追加されていれば削除
+    }
+
+    // 「その他のルート」メニューを閉じてボタンテキストをリセット
+    document.getElementById('others-menu').style.display = 'none';
+    document.querySelector('.btn-toggle-others').innerText = "その他のルートを開く ▼";
+
+    // GPS取得を開始してルート計算へ進む
+    useGPS();
+}
+
+// ── ローディング画面の表示・非表示を切り替える ──
+// v: true = 表示する, false = 非表示にする
+// msg: ローディング画面に表示するメッセージ文（省略可能）
+function setLoading(v, msg) {
+    // classList.toggle('active', v): v が true なら 'active' クラスを追加（表示）、
+    //                                 false なら 'active' クラスを削除（非表示）
+    document.getElementById('loading-overlay').classList.toggle('active', v);
+
+    // メッセージが指定された場合は更新する
+    if (msg) document.getElementById('loading-msg').textContent = msg;
+}
+
+// ═══════════════════════════════════════════════════════
+// 【GPS取得】
+//
+// スマートフォンのGPS機能を使って現在地（緯度・経度）を取得し、
+// 取得成功したらその座標でルート計算を開始する。
+//
+// navigator.geolocation とは？
+//   ブラウザが持つGPS（位置情報）機能へのアクセス窓口。
+//   スマートフォンならGPSセンサー、PCならWi-Fiなどで現在地を推定する。
+//
+// コールバック関数とは？
+//   「処理が完了したあとに呼ばれる関数」のこと。
+//   GPS取得は時間がかかるため、「取れたら呼ぶ関数」「失敗したら呼ぶ関数」を
+//   あらかじめ渡しておく仕組み（非同期処理）。
+// ═══════════════════════════════════════════════════════
+function useGPS() {
+    document.getElementById('status-area').innerText = "📍 現在地を取得中...";
+
+    // GPSが使えない端末・ブラウザへの対応
+    if (!navigator.geolocation) {
+        alert("GPSが使えません。地図をタップして場所を指定してください。");
+        document.getElementById('status-area').innerText = "地図をタップしてください";
+        return; // 以降の処理を中断
+    }
+
+    // GPS位置情報を取得する
+    // 第1引数: 成功時に呼ばれるコールバック関数（pos = 位置情報オブジェクト）
+    // 第2引数: 失敗時に呼ばれるコールバック関数（err = エラーオブジェクト）
+    // 第3引数: オプション設定
+    navigator.geolocation.getCurrentPosition(
+        pos => {
+            // GPS取得成功！
+            // 地図の表示範囲を現在地に移動（ズームレベル16 = 街路レベル）
+            map.setView([pos.coords.latitude, pos.coords.longitude], 16);
+            // 取得した緯度・経度でルート計算を開始
+            calculateRoute(pos.coords.latitude, pos.coords.longitude);
+        },
+        err => {
+            // GPS取得失敗。エラーコードに応じたメッセージを表示
+            // err.code: 1=権限拒否, 2=位置情報取得不可, 3=タイムアウト
+            const msg = ["不明", "権限拒否", "位置情報取得不可", "タイムアウト"][err.code] || "不明";
+            document.getElementById('status-area').innerText =
+                "GPS失敗: " + msg + " → 地図をタップしてください";
+        },
+        {
+            enableHighAccuracy: false, // 高精度GPSは省電力のためオフ（Wi-Fiで十分）
+            timeout:            5000,  // 5秒以内に取得できなければタイムアウト
+            maximumAge:         30000  // 30秒以内のキャッシュ位置情報を使ってよい
+        }
+    );
+}
+
+// 地図をクリック（タップ）したときも同様にルート計算を開始する
+// e.latlng = クリックした地点の緯度・経度
+map.on('click', e => calculateRoute(e.latlng.lat, e.latlng.lng));
+
+// ═══════════════════════════════════════════════════════
+// 【メインルート計算】
+//
+// このアプリの「心臓部」となる関数。
+// GPS取得や地図タップで現在地が決まると、この関数が呼ばれる。
+//
+// 処理の流れ（8ステップ）:
+//   Step1: OSM道路グラフを取得（初回のみネット通信、以降はキャッシュ）
+//   Step2: 現在地に最近傍のグラフノードを特定
+//   Step3: 全避難所をグラフノードに対応付けて goalSet を作成
+//   Step4: ダイクストラ法で全避難所への最短距離を計算
+//   Step5: 最短の避難所（results[0]）を採用
+//   Step6: 高齢者モード + 距離500m以上なら休憩スポットを挿入
+//   Step7: ルートを地図に赤（高齢者）または青（通常）で描画
+//   Step8: 距離・到着時間・休憩スポット情報をUIに表示
+//
+// async/await:
+//   OSMデータの取得はインターネット通信を伴うため、
+//   async 関数として定義し、await で完了を待ってから次へ進む。
+//
+// try-catch-finally:
+//   エラー（通信失敗など）が起きても画面がフリーズしないよう
+//   try = 正常処理、catch = エラー処理、finally = 後始末を分けている。
+// ═══════════════════════════════════════════════════════
+async function calculateRoute(userLat, userLng) {
+    const _perfStart = performance.now(); // ⏱ 計測開始
+    document.getElementById('perf-badge').style.display = 'none'; // 前回の表示を隠す
+    setLoading(true, ''); // ローディング画面を表示
+
+    // 現在地マーカーを更新（watchPosition で既に表示中なら位置だけ更新）
+    if (!userMarker) {
+        userMarker = L.marker([userLat, userLng], { icon: makeArrowIcon(compassDeg), zIndexOffset: 1000 }).addTo(map);
+    } else {
+        userMarker.setLatLng([userLat, userLng]);
+        userMarker.setIcon(makeArrowIcon(compassDeg));
+    }
+
+    // try = エラーが起きなければここの処理を実行する
+    try {
+        // ── Step1: OSM道路グラフを取得 ──
+        // 初回は Overpass API に通信してグラフを構築する（数秒かかる）
+        // 2回目以降は osmGraph キャッシュから即座に返ってくる
+        const graph = await fetchOSMGraph();
+        const { nodes, adj, grid } = graph;
+
+        setLoading(true, 'ダイクストラ法で経路計算中…'); // メッセージ更新
+
+        // ── Step2: 現在地 → グラフノード に変換 ──
+        // 格子インデックスを使って高速に最近傍ノードを探索
+        const startNodeId = findNearestNodeFast(userLat, userLng, nodes, grid);
+
+        // ── Step3: 避難所 → goalSet（目標ノードのMap）に変換 ──
+        const goalSet = new Map();
+        shelters.forEach(s => {
+            const nodeId = findNearestNodeFast(s.lat, s.lng, nodes, grid);
+            // 複数の避難所が同じノードに対応する場合は最初の1件のみ登録
+            // （重複登録するとダイクストラが同一ノードで複数カウントしてしまうため）
+            if (!goalSet.has(nodeId)) {
+                goalSet.set(nodeId, s);
+            }
+        });
+
+        // ── Step4: ダイクストラ法を実行 ──
+        // startNodeId を出発点に、全方向へ道路距離コストで探索する
+        // goalSet の中のノードすべてへの最短距離を計算する
+        // results = [{ shelter, path, distM, distCost }, ...]（近い順）
+        const results = dijkstra(startNodeId, goalSet, graph);
+
+        // 1つも避難所が見つからなかった場合（グラフが分断されているなど）
+        if (results.length === 0) {
+            document.getElementById('status-area').innerText = "避難所へのルートが見つかりませんでした。";
+            return;
+        }
+
+        // ── Step5: 最寄り避難所（最短距離のもの）を選ぶ ──
+        // results[0] = ダイクストラ法が最初に見つけた避難所 = 最も道路距離が短い避難所
+        const best = results[0];
+        // 分割代入: オブジェクトのプロパティを別々の変数に取り出す
+        // shelter → nearestShelter という名前に変えて受け取る
+        const { shelter: nearestShelter, path } = best;
+        let distM = best.distM;
+
+        // ── Step6: 休憩スポットを挿入（高齢者モード・long距離 or via-restモード）──
+        let selectedRests = []; // 選ばれた休憩スポットのリスト
+        let finalPath = path;   // 最終的に描画するpath（via-restのとき経由点経路に差し替え）
+
+        const needsRest = (currentMode === 'elderly' && distM >= REST_TRIGGER_M)
+                        || currentMode === 'via-rest';
+
+        if (needsRest) {
+            const { waypoints, restNames } = insertRestSpots(path, nodes);
+            selectedRests = waypoints;
+
+            // ── via-restモード: 休憩スポットを実際にルートが通るよう再計算 ──
+            // 経由地点が見つかった場合、セグメントごとにダイクストラを実行して
+            // 各区間を連結した「実際に休憩所を通るルート」を作成する
+            if (currentMode === 'via-rest' && selectedRests.length > 0) {
+                setLoading(true, '休憩所を通るルートを計算中…');
+
+                // 経由地リスト: [現在地ノード, 休憩所ノード1, 休憩所ノード2..., 避難所ノード]
+                const waypointNodeIds = selectedRests.map(s => findNearestNodeFast(s.lat, s.lng, nodes, grid));
+                const segments = [startNodeId, ...waypointNodeIds];
+
+                // 最後のセグメントは避難所（最短ルートで求めた避難所ノードを再利用）
+                const shelterNodeId = findNearestNodeFast(nearestShelter.lat, nearestShelter.lng, nodes, grid);
+
+                // 各セグメント（区間）ごとにダイクストラを実行して経路を連結する
+                let combinedPath = [];
+                let totalViaDistM = 0;
+                let routeOk = true;
+
+                for (let i = 0; i < segments.length; i++) {
+                    const fromNodeId = segments[i];
+                    // ゴールセット: 次の経由地または避難所
+                    const toNodeId = (i < segments.length - 1) ? segments[i + 1] : shelterNodeId;
+
+                    const segGoalSet = new Map();
+                    // ゴールとなるノードのラベルを仮設定（名前は表示しないので何でもOK）
+                    segGoalSet.set(toNodeId, { name: 'waypoint' });
+
+                    const segResults = dijkstra(fromNodeId, segGoalSet, graph);
+                    if (segResults.length === 0) { routeOk = false; break; }
+
+                    const segPath = segResults[0].path;
+                    totalViaDistM += segResults[0].distM;
+
+                    // 連結するとき、先頭ノードが前セグメントの末尾と重複するので除外
+                    if (combinedPath.length > 0) {
+                        combinedPath = combinedPath.concat(segPath.slice(1));
+                    } else {
+                        combinedPath = segPath;
+                    }
+                }
+
+                if (routeOk && combinedPath.length > 0) {
+                    finalPath = combinedPath;
+                    distM = totalViaDistM; // via-restは区間距離の合計で上書き
+                }
+            }
+        }
+
+        // ── Step7: ルートを地図に描画 ──
+        // via-rest = 緑（#27ae60）, 高齢者モード = 赤（#e74c3c）, 通常モード = 青（#3498db）
+        const color = currentMode === 'via-rest' ? '#27ae60'
+                    : currentMode === 'elderly'   ? '#e74c3c'
+                    : '#3498db';
+        drawRoute(finalPath, nodes, color);
+
+        // ── Step8: UIを更新 ──
+        // 歩行速度（m/秒）: 高齢者/via-rest=0.5m/s, 通常=1.2m/s（国土交通省バリアフリー基準）
+        const speed   = (currentMode === 'elderly' || currentMode === 'via-rest') ? 0.5 : 1.2;
+        // 到着時間（分）= 距離(m) ÷ 速度(m/s) ÷ 60秒
+        // Math.ceil() = 小数点以下を切り上げ（例: 7.2 → 8分）
+        const timeMin = Math.ceil(distM / speed / 60);
+        // 表示用距離（km, 小数点2桁）
+        const distKm  = (distM / 1000).toFixed(2);
+
+        // 各HTML要素にテキストを設定
+        const modeLabel = currentMode === 'via-rest' ? '休憩所経由ルート' : 'ダイクストラ法';
+        document.getElementById('status-area').innerText = `ルートが見つかりました！（${modeLabel}）`;
+        document.getElementById('result-box').style.display = 'block'; // 結果ボックスを表示
+        document.getElementById('dest-name').innerText = nearestShelter.name;
+        document.getElementById('dest-dist').innerText  = distKm + " km（道路距離）";
+        document.getElementById('dest-time').innerText  =
+            (currentMode === 'elderly' || currentMode === 'via-rest')
+                ? '約' + timeMin + '分（高齢者速度）'
+                : '約' + timeMin + '分';
+
+        // リアルタイム更新用：目的地と速度を記憶
+        navDestLat  = nearestShelter.lat;
+        navDestLng  = nearestShelter.lng;
+        navSpeedMs  = (currentMode === 'elderly' || currentMode === 'via-rest') ? 0.83 : 1.2;
+
+        // 前回の強調マーカー（休憩スポット）があれば削除
+        if (highlightMarker) { map.removeLayer(highlightMarker); highlightMarker = null; }
+
+        const restInfoEl = document.getElementById('rest-info'); // 休憩情報エリア
+        const restTextEl = document.getElementById('rest-text'); // 休憩テキスト
+
+        // 休憩情報・強調マーカーはvia-restモードのときだけ表示
+        if (currentMode === 'via-rest') {
+            restInfoEl.style.display = 'block';
+
+            if (selectedRests.length > 0) {
+                restInfoEl.className = '';
+                restTextEl.innerHTML = '🌳 <b>経由休憩スポット:</b><br>'
+                    + selectedRests.map(s => {
+                        const isBench = BENCH_NAMES.has(s.name);
+                        return (isBench ? '🪑 ' : '🌳 ') + s.name;
+                      }).join('<br>');
+
+                selectedRests.forEach((hl, idx) => {
+                    const isBench = BENCH_NAMES.has(hl.name);
+                    const hlIcon = L.divIcon({
+                        html: `<div style="font-size:15px;line-height:1;animation:pulse 1s ease-in-out infinite;">${isBench ? '🪑' : '🌳'}</div>`,
+                        className: '', iconSize: [18,18], iconAnchor: [9,9]
+                    });
+                    const m = L.marker([hl.lat, hl.lng], { icon: hlIcon })
+                        .addTo(map)
+                        .bindPopup(`<b>${isBench ? '🪑' : '🌳'} 経由休憩スポット ${idx + 1}</b><br>${hl.name}`);
+                    if (idx === 0) highlightMarker = m;
+                });
+            } else {
+                restInfoEl.className = 'warning';
+                restTextEl.innerHTML = '⚠️ 近くに適切な休憩スポットがないため直接向かいます';
+            }
+        } else {
+            restInfoEl.style.display = 'none';
+        }
+
+        // ルートが画面に収まるように地図の表示範囲を自動調整
+        // fitBounds() = ルートのバウンディングボックス（最小外接矩形）に合わせる
+        // padding = 下部・左部にUI分のスペースを確保
+        map.fitBounds(routeLayer.getBounds(), {
+            paddingBottomRight: [0, 200], paddingTopLeft: [200, 0]
+        });
+
+    } catch (err) {
+        // ── エラー処理 ──
+        // Overpass APIへの通信失敗、グラフ構築エラーなどが起きた場合
+        document.getElementById('status-area').innerText = "エラー: " + err.message;
+        console.error(err); // 開発者ツール（F12）のコンソールに詳細を表示
+    } finally {
+        // ── 後始末（成功・失敗どちらの場合も必ず実行） ──
+        // finally = tryとcatchが終わった後に必ず呼ばれるブロック
+        setLoading(false); // ローディング画面を必ず非表示にする
+
+        // ⏱ 計測終了 → 右下バッジに表示
+        const _perfMs = performance.now() - _perfStart;
+        const _perfSec = (_perfMs / 1000).toFixed(2);
+        document.getElementById('perf-time').innerText = _perfSec + ' s';
+        document.getElementById('perf-badge').style.display = 'block';
+    }
+}
+
+// ═══════════════════════════════════════════════════════
+// 【手動ナビ開始】
+//
+// 地図上のマーカー（避難所・公園・ベンチなど）のポップアップに表示される
+// 「🧭 ここへナビ」ボタンが押されたときに呼ばれる関数。
+//
+// 引数:
+//   lat, lng : 目的地の緯度・経度
+//   name     : 目的地の名前（表示用）
+// ═══════════════════════════════════════════════════════
+function navigateTo(lat, lng, name) {
+    map.closePopup(); // ポップアップを閉じる
+
+    // 現在地マーカーがなければ（まだGPSを使っていない）エラーメッセージ
+    if (!userMarker) {
+        alert("先に現在地を取得してください（🆘ボタンを押してください）");
+        return; // 処理を中断
+    }
+
+    // 現在地マーカーから現在地の緯度・経度を取り出す
+    // getLatLng() = Leafletマーカーから座標を取得するメソッド
+    const userLL = userMarker.getLatLng();
+
+    // 手動ルート計算を開始（現在地 → 指定した目的地）
+    directRoute(userLL.lat, userLL.lng, lat, lng, name);
+}
+
+// ═══════════════════════════════════════════════════════
+// 【手動ルート計算】
+//
+// 指定した2点（現在地 → 目的地）の最短経路をダイクストラ法で計算し、
+// 紫色のルートとして地図に描画する。
+//
+// calculateRoute() との違い:
+//   calculateRoute() → 全避難所を対象に自動で最短を選ぶ（複数ゴール）
+//   directRoute()    → 1対1（現在地 → ユーザーが選んだ1か所）
+//
+// 引数:
+//   userLat, userLng : 現在地の緯度・経度
+//   destLat, destLng : 目的地の緯度・経度
+//   destName         : 目的地の名前（表示用）
+// ═══════════════════════════════════════════════════════
+async function directRoute(userLat, userLng, destLat, destLng, destName) {
+    setLoading(true, 'ルート計算中…'); // ローディング画面を表示
+
+    // 前回の強調マーカー（休憩スポット）があれば削除
+    if (highlightMarker) { map.removeLayer(highlightMarker); highlightMarker = null; }
+
+    try {
+        // OSM道路グラフを取得（キャッシュ済みであれば即座に返る）
+        const graph = await fetchOSMGraph();
+        const { nodes, grid } = graph;
+
+        // 現在地と目的地をそれぞれ最近傍ノードに変換（格子インデックスで高速化）
+        const startNodeId = findNearestNodeFast(userLat, userLng, nodes, grid);
+        const goalNodeId  = findNearestNodeFast(destLat, destLng, nodes, grid);
+
+        // goalSet = 目的地ノード1件だけのMap
+        // new Map([[key, value]]) = 初期要素1件でMapを作成するJavaScriptの書き方
+        const goalSet = new Map([[goalNodeId, { name: destName, lat: destLat, lng: destLng }]]);
+
+        // ダイクストラ法で1対1の最短経路を計算
+        const results = dijkstra(startNodeId, goalSet, graph);
+
+        // 経路が見つからなかった場合（グラフ分断などのレアケース）
+        if (results.length === 0) {
+            document.getElementById('status-area').innerText = "ルートが見つかりませんでした。";
+            return;
+        }
+
+        // 最短経路を取得
+        const { path, distM } = results[0];
+
+        // ルートを地図に紫色で描画（手動ナビは紫 = '#8e44ad'）
+        drawRoute(path, nodes, '#8e44ad');
+
+        // 距離と到着時間を計算してUIに表示
+        const distKm  = (distM / 1000).toFixed(2);       // km表示（小数2桁）
+        const timeMin = Math.ceil(distM / 1.2 / 60);     // 通常徒歩速度1.2m/sで計算
+
+        document.getElementById('status-area').innerText = "ナビ中（手動選択）";
+        document.getElementById('result-box').style.display = 'block';
+        document.getElementById('dest-name').innerText = destName;
+        document.getElementById('dest-dist').innerText  = distKm + " km（道路距離）";
+        document.getElementById('dest-time').innerText  = '約' + timeMin + '分';
+        document.getElementById('rest-info').style.display = 'none'; // 休憩情報は非表示
+
+        // リアルタイム更新用：目的地と速度を記憶（手動ナビは常に通常速度）
+        navDestLat = lat;
+        navDestLng = lng;
+        navSpeedMs = 1.2;
+
+        // ルートが全画面に収まるよう表示範囲を自動調整
+        map.fitBounds(routeLayer.getBounds(), {
+            paddingBottomRight: [0, 200], paddingTopLeft: [200, 0]
+        });
+
+    } catch (err) {
+        // エラー発生時: 状態表示エリアにエラーメッセージを表示
+        document.getElementById('status-area').innerText = "エラー: " + err.message;
+        console.error(err); // 開発者ツールのコンソールにも詳細を出力
+    } finally {
+        setLoading(false); // 成功・失敗どちらでもローディングを非表示にする
+    }
+}
+// ── 気象庁API 警報バナー ──
+const TOSHIMA_CODE = '1313100'; // 豊島区のエリアコード
+
+const WARNING_LABELS = {
+    '大雨警報': '大雨警報',
+    '洪水警報': '洪水警報',
+    '暴風警報': '暴風警報',
+    '大雪警報': '大雪警報',
+    '大雨注意報': '大雨注意報',
+    '洪水注意報': '洪水注意報',
+};
+
+async function fetchWeatherWarning() {
+    try {
+        const res = await fetch('https://www.jma.go.jp/bosai/warning/data/warning/130000.json');
+        const data = await res.json();
+        
+        const banner = document.getElementById('weather-banner');
+        const areaWarnings = [];
+
+        // 豊島区のデータを探す
+        if (data.areaTypes) {
+            for (const areaType of data.areaTypes) {
+                for (const area of areaType.areas) {
+                    if (area.code === TOSHIMA_CODE) {
+                        for (const item of area.warnings) {
+                            if (item.status === '発表' || item.status === '継続') {
+                                areaWarnings.push(item.text);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (areaWarnings.length > 0) {
+            const hasWarning = areaWarnings.some(w => w.includes('警報'));
+            banner.className = hasWarning ? 'warning' : 'advisory';
+            banner.textContent = '⚠️ 豊島区に' + areaWarnings.join('・') + 'が発令されています';
+            banner.style.display = 'block';
+        } else {
+            banner.style.display = 'none';
+        }
+    } catch (e) {
+        console.warn('気象情報の取得に失敗:', e);
+    }
+}
+
+// 起動時と5分ごとに更新
+fetchWeatherWarning();
+setInterval(fetchWeatherWarning, 5 * 60 * 1000);
+// テスト用（確認したら消す）
+document.getElementById('weather-banner').style.display = 'block';
+document.getElementById('weather-banner').className = 'warning';
+document.getElementById('weather-banner').textContent = '⚠️ 豊島区に大雨警報が発令されています';
+</script>
+</body>
+</html>
