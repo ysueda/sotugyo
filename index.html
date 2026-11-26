@@ -108,11 +108,24 @@
 }
 #weather-banner.warning { background: #e67e22; }
 #weather-banner.advisory { background: #f39c12; }
+
+        /* 天気ボックス */
+        #weather-box {
+            display: none;
+            position: absolute; top: 10px; right: 10px;
+            z-index: 1000;
+            background: rgba(255,255,255,0.95);
+            padding: 8px 12px; border-radius: 8px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+            font-size: 13px; text-align: center; line-height: 1.6;
+        }
+        #weather-box .temp { font-size: 20px; font-weight: bold; color: #e74c3c; }
     </style>
 </head>
 <body>
 
 <div id="weather-banner"></div>
+<div id="weather-box"></div>
 <div id="map"></div>
 
 <div id="loading-overlay">
@@ -1210,6 +1223,8 @@ function useGPS() {
             // GPS取得成功！
             // 地図の表示範囲を現在地に移動（ズームレベル16 = 街路レベル）
             map.setView([pos.coords.latitude, pos.coords.longitude], 16);
+            // 現在地の天気を取得して右上に表示
+            fetchWeather(pos.coords.latitude, pos.coords.longitude);
             // 取得した緯度・経度でルート計算を開始
             calculateRoute(pos.coords.latitude, pos.coords.longitude);
         },
@@ -1623,10 +1638,26 @@ async function fetchWeatherWarning() {
 // 起動時と5分ごとに更新
 fetchWeatherWarning();
 setInterval(fetchWeatherWarning, 5 * 60 * 1000);
-// テスト用（確認したら消す）
-document.getElementById('weather-banner').style.display = 'block';
-document.getElementById('weather-banner').className = 'warning';
-document.getElementById('weather-banner').textContent = '⚠️ 豊島区に大雨警報が発令されています';
+
+async function fetchWeather(lat, lng) {
+    try {
+        const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&current=temperature_2m,weathercode&timezone=Asia%2FTokyo`;
+        const res = await fetch(url);
+        const data = await res.json();
+        const temp = data.current.temperature_2m;
+        const code = data.current.weathercode;
+        const weatherLabel = code === 0 ? '☀️ 快晴'
+                           : code <= 3  ? '⛅ 曇り'
+                           : code <= 67 ? '🌧️ 雨'
+                           : code <= 77 ? '🌨️ 雪'
+                           : '⛈️ 嵐';
+        const box = document.getElementById('weather-box');
+        box.innerHTML = `${weatherLabel}<br><span class="temp">${temp}°C</span>`;
+        box.style.display = 'block';
+    } catch (e) {
+        console.warn('天気取得失敗:', e);
+    }
+}
 </script>
 </body>
 </html>
